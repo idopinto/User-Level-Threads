@@ -71,13 +71,20 @@ address_t translate_address(address_t addr)
 #define SIG_ACTION_ERR "sig_action failed"
 #define PROCMASK_ERR "sigprocmask failed"
 #define ITIMER_ERR "setitimer failed"
+#define BAD_ALLOC_ERR "allocation failed"
 
 #define LIB_ERR "thread library error: %s\n"
 #define INVALID_TID "the thread id is invalid (it needs to be  between 0 to 99)"
+#define MAX_THREAD_NUM_REACHED "no more threads can be spawned"
+
 #define NON_EXIST_THREAD "the thread doesn't exist"
 #define INVALID_BLOCK_TO_MAIN "it's illegal to block the main thread"
-#define NEGATIVE_QUANTUM_USECS "quantum_usecs must be positive"
+#define NON_POSITIVE_QUANTUM_USECS "quantum_usecs must be positive"
 
+
+#define INVALID_ENTRY "invalid entry point"
+
+#define SIG_EMPTY_SET_ERR "sigemptyset failed" // set errno to indicate the error
 
 /*This class represents thread object*/
 class Thread{
@@ -99,7 +106,13 @@ public:
     Thread(int tid,thread_entry_point entry){
         if(tid != MAIN_THREAD_TID){
             this->tid = tid;
-            this->stack = new char[STACK_SIZE];
+
+            try{
+                this->stack = new char[STACK_SIZE];
+            }catch(std::bad_alloc&){
+                fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
+                exit(1);
+            }
             this->state = READY;
             this->quantum_counter = 0;
             this->entry_point = entry;
@@ -108,7 +121,10 @@ public:
             sigsetjmp(t_env, RET_VAL_FOR_LONG);
             (t_env->__jmpbuf)[JB_SP] = translate_address(sp);
             (t_env->__jmpbuf)[JB_PC] = translate_address(pc);
-            sigemptyset(&t_env->__saved_mask);
+            if(sigemptyset(&t_env->__saved_mask)){
+                fprintf(stderr,SYS_ERR,SIG_EMPTY_SET_ERR);
+                exit(1);
+            }
         }
     };
 
@@ -116,10 +132,12 @@ public:
      * Default C'tor
      */
     Thread(){
-        this->state = RUNNING;
         if(tid == MAIN_THREAD_TID){
+            this->state = RUNNING;
             sigsetjmp(t_env, RET_VAL_FOR_LONG);
-            sigemptyset(&t_env->__saved_mask);
+            if(sigemptyset(&t_env->__saved_mask)){
+                fprintf(stderr,SYS_ERR,SIG_EMPTY_SET_ERR);
+            }
         }
     }
 
@@ -167,7 +185,7 @@ std::list<Thread*> ready_list;
 std::map<int,Thread*> thread_map;
 std::list<Thread*> sleeping_threads;
 /*~~~Global variables~~~~*/
-int quantum_usec;
+int program_quantum_num;
 int global_quantum_counter = 1;
 Thread *running_thread;
 struct sigaction sa = {nullptr};
@@ -267,22 +285,6 @@ void block_timer(int how){
     }
 }
 
-//void block_timer(bool flag){
-//    if(flag){
-//        if(sigprocmask(SIG_BLOCK,&set, nullptr)){
-//            fprintf(stderr,SYS_ERR,"unable to block or unblock signal");
-//            exit(1);
-//        }
-//    }
-//    else{
-//        if(sigprocmask(SIG_UNBLOCK,&set, nullptr)){
-//            fprintf(stderr,SYS_ERR,"unable to block or unblock signal");
-//            exit(1);
-//
-//        }
-//    }
-//}
-//
 //void default_timer_handler(void){
 //    // Install timer_handler as the signal handler for SIGVTALRM.
 //    memset(&sa, 0, sizeof(sa));
@@ -299,16 +301,16 @@ void block_timer(int how){
  * initialize the alarm clock timer to expire after quentum time
  */
 void timer_configuration(){
-    timer.it_value.tv_sec = quantum_usec / SECOND;        // first time interval, seconds part
-    timer.it_value.tv_usec = quantum_usec % SECOND;        // first time interval, microseconds part
-    timer.it_interval.tv_sec = quantum_usec / SECOND;    // following time intervals, seconds part
-    timer.it_interval.tv_usec = quantum_usec % SECOND;    // following time intervals, microseconds part
+    timer.it_value.tv_sec = program_quantum_num / SECOND;        // first time interval, seconds part
+    timer.it_value.tv_usec = program_quantum_num % SECOND;        // first time interval, microseconds part
+    timer.it_interval.tv_sec = program_quantum_num / SECOND;    // following time intervals, seconds part
+    timer.it_interval.tv_usec = program_quantum_num % SECOND;    // following time intervals, microseconds part
 }
 
 /**
  * reset a virtual timer. It counts down whenever this process is executing.
  */
-void reset_virtual_timer_for_this_process(void){
+void reset_virtual_timer_for_this_process(){
     if (setitimer(ITIMER_VIRTUAL, &timer, NULL))
     {
         fprintf(stderr,SYS_ERR,ITIMER_ERR);
@@ -340,6 +342,8 @@ int update_sleeping_list(){
     }
     return SUCCESS;
 }
+
+
 /**
  * signal handler for the SIGVTALR.
  * executed only when the quantum expire.
@@ -352,15 +356,41 @@ void timer_handler(int sig){
     /* set the running thread to be in the end of the ready list*/
     running_thread->set_state(READY);
     ready_list.push_back(running_thread);
-
     switch_threads();
+}
+
+/**
+ * This function can be called when quantum time is expired, thread is terminated or blocked.
+ */
+void switch_threads() {
+    /* if the running thread isn't terminated */
+    if(running_thread != nullptr)
+    {
+        int ret_val = sigsetjmp(running_thread->t_env, RET_VAL_FOR_LONG);
+        if(ret_val == RET_VAL_FOR_LONG){
+            block_timer(SIG_UNBLOCK);
+            return;
+        }
+    }
+    // pop the first thread from the ready list and set it to be the running thread and increase his quantum by one
+    running_thread = ready_list.front();
+    running_thread->set_state(RUNNING);
+    running_thread->inc_quantum();
+    ready_list.pop_front();
+    block_timer(SIG_UNBLOCK);
+//    printf("***** One quantum has passed. now: %d *****\n",uthread_get_total_quantums());
+//    printf("***** quantum of the running thread . now: %d *****\n",running_thread->get_quantums());
+//    uthread_print_as_list();
+
+    // jump to the next thread
+    siglongjmp(running_thread->t_env,RET_VAL_FOR_LONG);
+
 }
 
 /**
  * Install timer_handler as the signal handler for SIGVTALRM.
  */
-void install_timer_handler(void){
-
+void install_timer_handler(){
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = &timer_handler;
     sa.sa_flags = SA_SIGINFO;
@@ -373,6 +403,9 @@ void install_timer_handler(void){
 
 }
 
+/**
+ * free all the stacks allocated for each thread (except for main) and clear all data structures
+ */
 void terminate_all_threads() {
     for (auto p : thread_map) {
         delete p.second;
@@ -383,92 +416,115 @@ void terminate_all_threads() {
     sleeping_threads.clear();
 }
 
-void switch_threads() {
-
-    if(running_thread != nullptr)
-    {
-        int ret_val = sigsetjmp(running_thread->t_env,RET_VAL_FOR_LONG);
-        if(ret_val == RET_VAL_FOR_LONG){
-            block_timer(SIG_UNBLOCK);
-            return;
-        }
+/**
+ * checks if tid between 0 to 100,prints error if needed.
+ * assumption: SIGVTALRM is blocked when calling
+ * @param tid
+ * @return 0 for success -1 othewrwise
+ */
+int tid_validation(int tid){
+    if(tid >= MAX_THREAD_NUM || tid < 0 ){
+        fprintf(stderr,LIB_ERR,INVALID_TID);
+        block_timer(SIG_UNBLOCK);
+        return FAILURE;
     }
-
-    // push to ready list - only when quantum ends
-//    if((running_thread != nullptr) && (running_thread->get_state() != BLOCK )){
-//        running_thread->set_state(READY);
-//        ready_list.push_back(running_thread);
-//    }
-//    running_thread->inc_quantum();
-    running_thread = ready_list.front();
-    running_thread->set_state(RUNNING);
-    running_thread->inc_quantum();
-//    printf("***** One quantum has passed. now: %d *****\n",uthread_get_total_quantums());
-//    printf("***** quantum of the running thread . now: %d *****\n",running_thread->get_quantums());
-//    if(running_thread->get_quantums() == 0){
-//        running_thread->inc_quantum();//TODO WRONG WRONGG
-//    }
-    ready_list.pop_front();
-    block_timer(SIG_UNBLOCK);
-//    uthread_print_as_list();
-    siglongjmp(running_thread->t_env,RET_VAL_FOR_LONG);
-
+    return SUCCESS;
 }
-
 /*~~~~~~~~~~~~~~~~~~~~~~*/
 
 /*~~~~~~ UThread library ~~~~~~*/
-
+/**
+ * @brief initializes the thread library.
+ *
+ * You may assume that this function is called before any other thread library function, and that it is called
+ * exactly once.
+ * The input to the function is the length of a program_quantum_num in micro-seconds.
+ * It is an error to call this function with non-positive quantum_usecs.
+ *
+ * @return On success, return 0. On failure, return -1.
+*/
 int uthread_init(int quantum_usecs){
 
     if(quantum_usecs <= 0){
-        printf("thread library error: invalid quantum_usecs input\n" );
+        fprintf(stderr,LIB_ERR,NON_POSITIVE_QUANTUM_USECS);
         return FAILURE;
     }
 
-    quantum_usec = quantum_usecs;
-    running_thread = new Thread(); // validity
-    thread_map.insert({0,running_thread});
+    program_quantum_num = quantum_usecs;
 
+    // initialize the main thread to be the running thread and insert it to map
+    try{
+        running_thread = new Thread();
+    } catch (std::bad_alloc&) {
+        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
+        exit(1);
+    }
+    thread_map.insert({MAIN_THREAD_TID,running_thread});
+    // initialize empty signal mask set and add SIGVTALRM signal
+    // so this signal can be blocked or unblocked using sigprocmask for our use in ease
     sigemptyset(&set);
     sigaddset(&set,SIGVTALRM);
 
+    // initialize the signal handler for the alarm timer,
+    // configure the interval length (with quantum) and let the virtual timer start ticking
     install_timer_handler();
     timer_configuration();
     reset_virtual_timer_for_this_process();
 //    uthread_print_as_list();
     return SUCCESS;
 }
-
+/**
+ * @brief Creates a new thread, whose entry point is the function entry_point with the signature
+ * void entry_point(void).
+ *
+ * The thread is added to the end of the READY threads list.
+ * The uthread_spawn function should fail if it would cause the number of concurrent threads to exceed the
+ * limit (MAX_THREAD_NUM).
+ * Each thread should be allocated with a stack of size STACK_SIZE bytes.
+ *
+ * @return On success, return the ID of the created thread. On failure, return -1.
+*/
 int uthread_spawn(thread_entry_point entry_point){
-    if(entry_point == nullptr){
-        std::cerr<< "ERROR" << std::endl;
-    }
-    // block timer TODO allocation validity
     block_timer(SIG_BLOCK);
+
+    if(!entry_point){
+        fprintf(stderr,LIB_ERR,INVALID_ENTRY);
+    }
+
     if ((int)(thread_map).size() == MAX_THREAD_NUM){
-        printf("ERROR");
+        fprintf(stderr,LIB_ERR,MAX_THREAD_NUM_REACHED);
         return FAILURE;
     }
-    Thread* thread = new Thread(get_thread_id_for_spawn(),entry_point);
+
+    Thread* thread = new Thread(get_thread_id_for_spawn(), entry_point);
+    if(thread == nullptr){
+        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
+        exit(1);
+    }
+
     ready_list.push_back(thread);
     thread_map.insert({thread->get_tid(),thread});
 //    printf("Spawned thread: %d\n",thread->get_tid());
 //    uthread_print_as_list();
-
-    // unblock timer
     block_timer(SIG_UNBLOCK);
     return thread->get_tid();
 }
 
+
+/**
+ * @brief Terminates the thread with ID tid and deletes it from all relevant control structures.
+ *
+ * All the resources allocated by the library for this thread should be released. If no thread with ID tid exists it
+ * is considered an error. Terminating the main thread (tid == 0) will result in the termination of the entire
+ * process using exit(0) (after releasing the assigned library memory).
+ *
+ * @return The function returns 0 if the thread was successfully terminated and -1 otherwise. If a thread terminates
+ * itself or the main thread is terminated, the function does not return.
+*/
 int uthread_terminate(int tid){
     block_timer(SIG_BLOCK);
-    if(tid>=MAX_THREAD_NUM ||tid<0 ){
-        printf("thread library error: invalid input:TERMINATE\n");
-        block_timer(SIG_UNBLOCK);
-        return FAILURE;
+    if(!tid_validation(tid)){return FAILURE;}
 
-    }
     if (tid == MAIN_THREAD_TID){
         terminate_all_threads();
         exit(0);
@@ -531,6 +587,15 @@ int uthread_terminate(int tid){
     return SUCCESS;
 }
 
+/**
+ * @brief Blocks the thread with ID tid. The thread may be resumed later using uthread_resume.
+ *
+ * If no thread with ID tid exists it is considered as an error. In addition, it is an error to try blocking the
+ * main thread (tid == 0). If a thread blocks itself, a scheduling decision should be made. Blocking a thread in
+ * BLOCKED state has no effect and is not considered an error.
+ *
+ * @return On success, return 0. On failure, return -1.
+*/
 int uthread_block(int tid){
     block_timer(SIG_BLOCK);
 
