@@ -135,6 +135,7 @@ public:
         if(tid == MAIN_THREAD_TID){
             this->state = RUNNING;
             sigsetjmp(t_env, RET_VAL_FOR_LONG);
+
             if(sigemptyset(&t_env->__saved_mask)){
                 fprintf(stderr,SYS_ERR,SIG_EMPTY_SET_ERR);
             }
@@ -394,7 +395,6 @@ void install_timer_handler(){
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = &timer_handler;
     sa.sa_flags = SA_SIGINFO;
-
     if (sigaction(SIGVTALRM, &sa, NULL) < 0)
     {
         fprintf(stderr,SYS_ERR,SIG_ACTION_ERR);
@@ -497,10 +497,10 @@ int uthread_spawn(thread_entry_point entry_point){
     }
 
     Thread* thread = new Thread(get_thread_id_for_spawn(), entry_point);
-    if(thread == nullptr){
-        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
-        exit(1);
-    }
+//    if(thread == nullptr){
+//        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
+//        exit(1);
+//    }
 
     ready_list.push_back(thread);
     thread_map.insert({thread->get_tid(),thread});
@@ -523,66 +523,102 @@ int uthread_spawn(thread_entry_point entry_point){
 */
 int uthread_terminate(int tid){
     block_timer(SIG_BLOCK);
-    if(!tid_validation(tid)){return FAILURE;}
+    if(tid_validation(tid)){return FAILURE;}
 
     if (tid == MAIN_THREAD_TID){
         terminate_all_threads();
         exit(0);
     }
     auto thread_iter = thread_map.find(tid);
-
-    if(running_thread->get_tid() != tid){
-        if (thread_iter == thread_map.end()){   // thread doesn't exist
-            printf("thread library error: thread doesn't exist:TERMINATE\n");
-            block_timer(SIG_UNBLOCK);
-            return FAILURE;
-        }
-        auto state = thread_iter->second->get_state();
-        if (state == READY){
-            // release resources
+    if (thread_iter == thread_map.end()){   // thread doesn't exist
+        fprintf(stderr,LIB_ERR,NON_EXIST_THREAD);
+        block_timer(SIG_UNBLOCK);
+        return FAILURE;
+    }
+    switch (thread_iter->second->get_state()) {
+        case READY:
             remove_thread_in_ready_list_by_tid(tid);
-
             thread_map.erase(thread_iter);
-//            printf("***** Terminated thread (READY): %d ***** \n",tid);
-//            uthread_print_as_list();
-        }
-        if (state == BLOCK){
-            // thread is blocked. terminate him.
-            auto blocked_thread = thread_map.find(tid);
-            delete blocked_thread->second;
+            break;
+        case BLOCK:
+            delete thread_iter->second;
+//            auto blocked_thread = thread_map.find(tid);
+//            delete blocked_thread->second;
             thread_map.erase(thread_map.find(tid));
-//            printf("***** Terminated thread (BLOCKED): %d ***** \n",tid);
-//            uthread_print_as_list();
-        }
-        else if ((state == SLEEPING) || (state == SLEEPING_AND_BLOCKED)){
-            auto thread = thread_map.find(tid);
-            delete &thread;
+            break;
+        case (SLEEPING | SLEEPING_AND_BLOCKED):
+//            auto thread = thread_map.find(tid);
+            delete thread_iter->second;
             thread_map.erase(thread_map.find(tid));
-
             for(auto it = sleeping_threads.begin();it != sleeping_threads.end();it++){
                 if((*it)->get_tid() == tid){
                     sleeping_threads.erase(it);
                     break;
                 }
             }
-        }
-
+            break;
+        case RUNNING:
+            thread_map.erase(thread_iter);
+            reset_virtual_timer_for_this_process();
+            global_quantum_counter++;
+            delete running_thread;
+            running_thread = nullptr;
+            if(ready_list.empty()){ uthread_terminate(0);}
+            switch_threads();
+            break;
     }
-    else{
-        // TODO terminate the running thread
-//        printf("***** Terminated thread (RUNNING): %d *****\n ",tid);
-        thread_map.erase(thread_iter);
-        reset_virtual_timer_for_this_process();
-        global_quantum_counter++;
-//        printf("***** Abruptly quantum has passed. now: %d *****\n",uthread_get_total_quantums());
-//        running_thread->inc_quantum();
-        delete running_thread;
-        running_thread = nullptr;
-        if(ready_list.empty()){ uthread_terminate(0);}
-//        printf("***** Termination completed *****\n");
-        switch_threads();
-//        timer_handler(0);
-    }
+//    if(running_thread->get_tid() != tid){
+//        if (thread_iter == thread_map.end()){   // thread doesn't exist
+//            printf("thread library error: thread doesn't exist:TERMINATE\n");
+//            block_timer(SIG_UNBLOCK);
+//            return FAILURE;
+//        }
+//        auto state = thread_iter->second->get_state();
+//        if (state == READY){
+//            // release resources
+//            remove_thread_in_ready_list_by_tid(tid);
+//
+//            thread_map.erase(thread_iter);
+////            printf("***** Terminated thread (READY): %d ***** \n",tid);
+////            uthread_print_as_list();
+//        }
+//        if (state == BLOCK){
+//            // thread is blocked. terminate him.
+//            auto blocked_thread = thread_map.find(tid);
+//            delete blocked_thread->second;
+//            thread_map.erase(thread_map.find(tid));
+////            printf("***** Terminated thread (BLOCKED): %d ***** \n",tid);
+////            uthread_print_as_list();
+//        }
+//        else if ((state == SLEEPING) || (state == SLEEPING_AND_BLOCKED)){
+//            auto thread = thread_map.find(tid);
+//            delete &thread;
+//            thread_map.erase(thread_map.find(tid));
+//
+//            for(auto it = sleeping_threads.begin();it != sleeping_threads.end();it++){
+//                if((*it)->get_tid() == tid){
+//                    sleeping_threads.erase(it);
+//                    break;
+//                }
+//            }
+//        }
+//
+//    }
+//    else{
+//        // TODO terminate the running thread
+////        printf("***** Terminated thread (RUNNING): %d *****\n ",tid);
+//        thread_map.erase(thread_iter);
+//        reset_virtual_timer_for_this_process();
+//        global_quantum_counter++;
+////        printf("***** Abruptly quantum has passed. now: %d *****\n",uthread_get_total_quantums());
+////        running_thread->inc_quantum();
+//        delete running_thread;
+//        running_thread = nullptr;
+//        if(ready_list.empty()){ uthread_terminate(0);}
+////        printf("***** Termination completed *****\n");
+//        switch_threads();
+////        timer_handler(0);
+//    }
     block_timer(SIG_UNBLOCK);
     return SUCCESS;
 }

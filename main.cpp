@@ -1,4 +1,44 @@
-#define TEST6
+#define TEST1
+
+
+//
+//    if (thread_iter == thread_map.end()){   // thread doesn't exist
+//        fprintf(stderr,LIB_ERR,NON_EXIST_THREAD);
+//        block_timer(SIG_UNBLOCK);
+//        return FAILURE;
+//    }
+//    switch (thread_iter->second->get_state()) {
+//        case READY:
+//            remove_thread_in_ready_list_by_tid(tid);
+//            thread_map.erase(thread_iter);
+//            break;
+//        case BLOCK:
+//            delete thread_iter->second;
+////            auto blocked_thread = thread_map.find(tid);
+////            delete blocked_thread->second;
+//            thread_map.erase(thread_map.find(tid));
+//            break;
+//        case (SLEEPING | SLEEPING_AND_BLOCKED):
+////            auto thread = thread_map.find(tid);
+//            delete thread_iter->second;
+//            thread_map.erase(thread_map.find(tid));
+//            for(auto it = sleeping_threads.begin();it != sleeping_threads.end();it++){
+//                if((*it)->get_tid() == tid){
+//                    sleeping_threads.erase(it);
+//                    break;
+//                }
+//            }
+//            break;
+//        case RUNNING:
+//            thread_map.erase(thread_iter);
+//            reset_virtual_timer_for_this_process();
+//            global_quantum_counter++;
+//            delete running_thread;
+//            running_thread = nullptr;
+//            if(ready_list.empty()){ uthread_terminate(0);}
+//            switch_threads();
+//            break;
+//    }
 #ifdef TEST1
 
 /**********************************************
