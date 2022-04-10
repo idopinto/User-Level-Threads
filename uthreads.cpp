@@ -510,7 +510,14 @@ int uthread_spawn(thread_entry_point entry_point){
     return thread->get_tid();
 }
 
-
+void remove_from_sleeping_threads(int tid){
+    for(auto it = sleeping_threads.begin();it != sleeping_threads.end();it++){
+        if((*it)->get_tid() == tid){
+            sleeping_threads.erase(it);
+            break;
+        }
+    }
+}
 /**
  * @brief Terminates the thread with ID tid and deletes it from all relevant control structures.
  *
@@ -542,20 +549,12 @@ int uthread_terminate(int tid){
             break;
         case BLOCK:
             delete thread_iter->second;
-//            auto blocked_thread = thread_map.find(tid);
-//            delete blocked_thread->second;
-            thread_map.erase(thread_map.find(tid));
+            thread_map.erase(thread_iter);
             break;
         case (SLEEPING | SLEEPING_AND_BLOCKED):
-//            auto thread = thread_map.find(tid);
             delete thread_iter->second;
-            thread_map.erase(thread_map.find(tid));
-            for(auto it = sleeping_threads.begin();it != sleeping_threads.end();it++){
-                if((*it)->get_tid() == tid){
-                    sleeping_threads.erase(it);
-                    break;
-                }
-            }
+            thread_map.erase(thread_iter); // maybe use find
+            remove_from_sleeping_threads(tid);
             break;
         case RUNNING:
             thread_map.erase(thread_iter);
@@ -567,58 +566,6 @@ int uthread_terminate(int tid){
             switch_threads();
             break;
     }
-//    if(running_thread->get_tid() != tid){
-//        if (thread_iter == thread_map.end()){   // thread doesn't exist
-//            printf("thread library error: thread doesn't exist:TERMINATE\n");
-//            block_timer(SIG_UNBLOCK);
-//            return FAILURE;
-//        }
-//        auto state = thread_iter->second->get_state();
-//        if (state == READY){
-//            // release resources
-//            remove_thread_in_ready_list_by_tid(tid);
-//
-//            thread_map.erase(thread_iter);
-////            printf("***** Terminated thread (READY): %d ***** \n",tid);
-////            uthread_print_as_list();
-//        }
-//        if (state == BLOCK){
-//            // thread is blocked. terminate him.
-//            auto blocked_thread = thread_map.find(tid);
-//            delete blocked_thread->second;
-//            thread_map.erase(thread_map.find(tid));
-////            printf("***** Terminated thread (BLOCKED): %d ***** \n",tid);
-////            uthread_print_as_list();
-//        }
-//        else if ((state == SLEEPING) || (state == SLEEPING_AND_BLOCKED)){
-//            auto thread = thread_map.find(tid);
-//            delete &thread;
-//            thread_map.erase(thread_map.find(tid));
-//
-//            for(auto it = sleeping_threads.begin();it != sleeping_threads.end();it++){
-//                if((*it)->get_tid() == tid){
-//                    sleeping_threads.erase(it);
-//                    break;
-//                }
-//            }
-//        }
-//
-//    }
-//    else{
-//        // TODO terminate the running thread
-////        printf("***** Terminated thread (RUNNING): %d *****\n ",tid);
-//        thread_map.erase(thread_iter);
-//        reset_virtual_timer_for_this_process();
-//        global_quantum_counter++;
-////        printf("***** Abruptly quantum has passed. now: %d *****\n",uthread_get_total_quantums());
-////        running_thread->inc_quantum();
-//        delete running_thread;
-//        running_thread = nullptr;
-//        if(ready_list.empty()){ uthread_terminate(0);}
-////        printf("***** Termination completed *****\n");
-//        switch_threads();
-////        timer_handler(0);
-//    }
     block_timer(SIG_UNBLOCK);
     return SUCCESS;
 }
