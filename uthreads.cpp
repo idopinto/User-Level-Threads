@@ -6,9 +6,7 @@
 #include "uthreads.h"
 #include <csetjmp>
 #include <map>
-#include <unordered_map>
 #include <set>
-#include <iostream>
 #include <list>
 #include <signal.h>
 #include <sys/time.h>
@@ -80,7 +78,6 @@ address_t translate_address(address_t addr)
 #define NON_EXIST_THREAD "the thread doesn't exist"
 #define INVALID_BLOCK_TO_MAIN "it's illegal to block the main thread"
 #define NON_POSITIVE_QUANTUM_USECS "quantum_usecs must be positive"
-
 
 #define INVALID_ENTRY "invalid entry point"
 
@@ -325,7 +322,7 @@ void reset_virtual_timer_for_this_process(){
  * @return 0 for success and -1 for failure
  */
 int update_sleeping_list(){
-    if(sleeping_threads.empty()){return SUCCESS;}
+//    if(sleeping_threads.empty()){return SUCCESS;}
     for (auto it = sleeping_threads.begin(); it != sleeping_threads.end() ; ++it) {
         auto cur = *it;
         cur->dec_sleeping_period();
@@ -353,7 +350,7 @@ int update_sleeping_list(){
 void timer_handler(int sig){
     block_timer(SIG_BLOCK); // so we won't get signal during the execution of this function
     global_quantum_counter++; // TODO maybe in switch_threads function
-    update_sleeping_list();
+//    update_sleeping_list();
     /* set the running thread to be in the end of the ready list*/
     running_thread->set_state(READY);
     ready_list.push_back(running_thread);
@@ -364,6 +361,7 @@ void timer_handler(int sig){
  * This function can be called when quantum time is expired, thread is terminated or blocked.
  */
 void switch_threads() {
+
     /* if the running thread isn't terminated */
     if(running_thread != nullptr)
     {
@@ -373,14 +371,14 @@ void switch_threads() {
             return;
         }
     }
+    update_sleeping_list();
+
     // pop the first thread from the ready list and set it to be the running thread and increase his quantum by one
     running_thread = ready_list.front();
     running_thread->set_state(RUNNING);
     running_thread->inc_quantum();
     ready_list.pop_front();
     block_timer(SIG_UNBLOCK);
-//    printf("***** One quantum has passed. now: %d *****\n",uthread_get_total_quantums());
-//    printf("***** quantum of the running thread . now: %d *****\n",running_thread->get_quantums());
 //    uthread_print_as_list();
 
     // jump to the next thread
@@ -402,20 +400,6 @@ void install_timer_handler(){
     }
 
 }
-
-/**
- * free all the stacks allocated for each thread (except for main) and clear all data structures
- */
-void terminate_all_threads() {
-    for (auto p : thread_map) {
-        delete p.second;
-        p.second = nullptr;
-    }
-    thread_map.clear();
-    ready_list.clear();
-    sleeping_threads.clear();
-}
-
 /**
  * checks if tid between 0 to 100,prints error if needed.
  * assumption: SIGVTALRM is blocked when calling
@@ -430,6 +414,20 @@ int tid_validation(int tid){
     }
     return SUCCESS;
 }
+/**
+ * free all the stacks allocated for each thread (except for main) and clear all data structures
+ */
+void terminate_all_threads() {
+    for (auto p : thread_map) {
+        delete p.second;
+        p.second = nullptr;
+    }
+    thread_map.clear();
+    ready_list.clear();
+    sleeping_threads.clear();
+}
+
+
 /*~~~~~~~~~~~~~~~~~~~~~~*/
 
 /*~~~~~~ UThread library ~~~~~~*/
@@ -497,10 +495,10 @@ int uthread_spawn(thread_entry_point entry_point){
     }
 
     Thread* thread = new Thread(get_thread_id_for_spawn(), entry_point);
-//    if(thread == nullptr){
-//        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
-//        exit(1);
-//    }
+    if(thread == nullptr){
+        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
+        exit(1);
+    }
 
     ready_list.push_back(thread);
     thread_map.insert({thread->get_tid(),thread});
@@ -549,10 +547,12 @@ int uthread_terminate(int tid){
             break;
         case BLOCK:
             delete thread_iter->second;
-            thread_map.erase(thread_iter);
+            thread_iter->second = nullptr;
+            thread_map.erase(thread_iter);//find
             break;
         case (SLEEPING | SLEEPING_AND_BLOCKED):
             delete thread_iter->second;
+            thread_iter->second = nullptr;
             thread_map.erase(thread_iter); // maybe use find
             remove_from_sleeping_threads(tid);
             break;
@@ -581,70 +581,62 @@ int uthread_terminate(int tid){
 */
 int uthread_block(int tid){
     block_timer(SIG_BLOCK);
-
-//    if(tid <= 0){
-//        printf("thread library error: invalid input\n");
-//        block_timer(false);
-//        return FAILURE;
-//    }
-    if(tid>=MAX_THREAD_NUM ||tid<=0){
-        printf("thread library error: invalid input:BLOCK\n");
-        block_timer(SIG_UNBLOCK);
+    if(tid_validation(tid)){return FAILURE;}
+    if (tid == MAIN_THREAD_TID){
+        fprintf(stderr,LIB_ERR,INVALID_BLOCK_TO_MAIN);
         return FAILURE;
-
     }
-
     auto thread_iter = thread_map.find(tid);
     if (thread_iter == thread_map.end()){   // thread doesn't exist
-        printf("thread library error: thread doesn't exist:BLOCK\n");
+        fprintf(stderr,LIB_ERR,NON_EXIST_THREAD);
         block_timer(SIG_UNBLOCK);
         return FAILURE;
     }
-
-    if(thread_iter->second->get_state() == RUNNING){
-        // if a thread blocks itself
-        thread_iter->second->set_state(BLOCK);
-//        printf("blocked thread number: %d\n",thread_iter->second->get_tid());
-//        timer_handler(1);
-        global_quantum_counter++;
-//        running_thread->inc_quantum();
-        reset_virtual_timer_for_this_process();
-//        printf("***** Abruptly quantum has passed. now: %d *****\n",uthread_get_total_quantums());
-
-        switch_threads();
-    }
-    else if(thread_iter->second->get_state() == READY){
-        // if a thread blocks another thread in ready list
-        for(auto it = ready_list.begin();it != ready_list.end();it++){
-            if((*it)->get_tid() == tid){
-                ready_list.erase(it);
-                break;
+    switch (thread_iter->second->get_state()) {
+        case RUNNING:
+            thread_iter->second->set_state(BLOCK);
+            global_quantum_counter++;
+            reset_virtual_timer_for_this_process();
+            switch_threads();
+            break;
+        case READY:
+            for(auto it = ready_list.begin();it != ready_list.end();it++){
+                if((*it)->get_tid() == tid){
+                    ready_list.erase(it);
+                    break;
+                }
             }
-        }
-        thread_iter->second->set_state(BLOCK);
-    }
-    else if(thread_iter->second->get_state() == SLEEPING){
-        thread_iter->second->set_state(SLEEPING_AND_BLOCKED);
+            thread_iter->second->set_state(BLOCK);
+            break;
+        case SLEEPING:
+            thread_iter->second->set_state(SLEEPING_AND_BLOCKED);
+            break;
+
     }
     // else if the the thread in block already there is no effect
     block_timer(SIG_UNBLOCK);
     return SUCCESS;
 }
 
+/**
+ * @brief Resumes a blocked thread with ID tid and moves it to the READY state.
+ *
+ * Resuming a thread in a RUNNING or READY state has no effect and is not considered as an error. If no thread with
+ * ID tid exists it is considered an error.
+ *
+ * @return On success, return 0. On failure, return -1.
+*/
 int uthread_resume(int tid){
     block_timer(SIG_BLOCK);
+    if(tid_validation(tid)){return FAILURE;}
 
-    if(tid <0){//changed from <= to <
-        printf("thread library error: invalid input\n");
-        block_timer(SIG_UNBLOCK);
-        return FAILURE;
-    }
     auto blocked_iter = thread_map.find(tid);
     if (blocked_iter == thread_map.end()){   // thread doesn't exist
-        printf("thread library error: thread doesn't exist:RESUME\n");
+        fprintf(stderr,LIB_ERR,NON_EXIST_THREAD);
         block_timer(SIG_UNBLOCK);
         return FAILURE;
     }
+
     if(blocked_iter->second->get_state() == SLEEPING_AND_BLOCKED){
         blocked_iter->second->set_state(SLEEPING);
     }
@@ -656,57 +648,74 @@ int uthread_resume(int tid){
     return SUCCESS;
 }
 
+/**
+ * @brief Blocks the RUNNING thread for num_quantums quantums.
+ *
+ * Immediately after the RUNNING thread transitions to the BLOCKED state a scheduling decision should be made.
+ * After the sleeping time is over, the thread should go back to the end of the READY threads list.
+ * The number of quantums refers to the number of times a new program_quantum_num starts, regardless of the reason. Specifically,
+ * the program_quantum_num of the thread which has made the call to uthread_sleep isn’t counted.
+ * It is considered an error if the main thread (tid==0) calls this function.
+ *
+ * @return On success, return 0. On failure, return -1.
+*/
 int uthread_sleep(int num_quantums){
     block_timer(SIG_BLOCK);
     if (num_quantums <= 0){
+        fprintf(stderr,LIB_ERR,NON_POSITIVE_QUANTUM_USECS);
         return FAILURE;
     }
     running_thread->set_sleeping_period(num_quantums);
     running_thread->set_state(SLEEPING);
     sleeping_threads.push_back(running_thread);
     global_quantum_counter++;
-//    running_thread->inc_quantum();
     reset_virtual_timer_for_this_process();
-//    printf("***** Abruptly quantum has passed. now: %d *****\n",uthread_get_total_quantums());
     switch_threads();
     return SUCCESS;
 }
 
+/**
+ * @brief Returns the thread ID of the calling thread.
+ * @return The ID of the calling thread.
+*/
 int uthread_get_tid(){
+    if(running_thread == nullptr){return FAILURE;}
     return running_thread->get_tid();
 }
 
+
+/**
+ * @brief Returns the total number of quantums since the library was initialized, including the current program_quantum_num.
+ *
+ * Right after the call to uthread_init, the value should be 1.
+ * Each time a new program_quantum_num starts, regardless of the reason, this number should be increased by 1.
+ *
+ * @return The total number of quantums.
+*/
 int uthread_get_total_quantums(){
     return global_quantum_counter;
 }
 
+
+/**
+ * @brief Returns the number of quantums the thread with ID tid was in RUNNING state.
+ *
+ * On the first time a thread runs, the function should return 1. Every additional program_quantum_num that the thread starts should
+ * increase this value by 1 (so if the thread with ID tid is in RUNNING state when this function is called, include
+ * also the current program_quantum_num). If no thread with ID tid exists it is considered an error.
+ *
+ * @return On success, return the number of quantums of the thread with ID tid. On failure, return -1.
+*/
 int uthread_get_quantums(int tid){
-    // TODO Validation
     block_timer(SIG_BLOCK);
-    if(tid>=MAX_THREAD_NUM ||tid<0 ){
-        printf("thread library error: invalid input\n");
-        block_timer(SIG_UNBLOCK);
-        return FAILURE;
+    if(tid_validation(tid)){return FAILURE;}
 
-    }
     auto thread_iter = thread_map.find(tid);
-    if (thread_iter == thread_map.end()) {   // thread doesn't exist
-        printf("thread library error: thread doesn't exist:GET\n");
+    if (thread_iter == thread_map.end()){   // thread doesn't exist
+        fprintf(stderr,LIB_ERR,NON_EXIST_THREAD);
         block_timer(SIG_UNBLOCK);
         return FAILURE;
     }
-
     block_timer(SIG_UNBLOCK);
-//    auto thread_iter = thread_map.find(tid);
-//    if (thread_iter == thread_map.end()){   // thread doesn't exist
-//        printf("thread library error: thread doesn't exist:GET\n");
-//        printf("%d\n",tid);
-////        block_timer(false);
-//        return FAILURE;
-//    }
-//    if(thread_iter->second->get_quantums() == 0  && thread_iter->second->get_state()==RUNNING ){
-//        running_thread->inc_quantum();//TODO WRONG WRONGG
-//    }
     return thread_map[tid]->get_quantums();
 }
-/*~~~~~~~~~~~~~~~~~~~~~~*/
