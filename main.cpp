@@ -1,7 +1,12 @@
+/**
+ * TEST1-6 : jona passed
+ * test1-7 : drive passed
+ * test8 : yuval arbel passed
+ */
+
 #define test8
 
 #ifdef TEST1
-
 /**********************************************
  * Test 1: correct threads ids
  *
@@ -1103,8 +1108,9 @@ int main(void)
     {
         return 0;
     }
-    for (int i = 0; i < 101; i++)
+    for (int i = 0; i < 100; i++)
         cout << uthread_spawn(f) << endl;
+    cout << uthread_spawn(f) << endl;
 
     uthread_terminate(5);
 
@@ -1202,8 +1208,6 @@ int main(void)
     uthread_terminate(0);
     return 0;
 }
-
-
 #endif
 
 #ifdef test4

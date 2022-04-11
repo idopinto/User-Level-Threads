@@ -1,6 +1,3 @@
-//
-// Created by idopinto12 on 29/03/2022.
-//
 
 #include <cstdio>
 #include "uthreads.h"
@@ -15,7 +12,7 @@
 
 #ifdef __x86_64__
 
-/* code for 64 bit Intel arch */
+/* code for 64-bit Intel arch */
 typedef unsigned long address_t;
 #define JB_SP 6
 #define JB_PC 7
@@ -53,7 +50,9 @@ address_t translate_address(address_t addr)
 }
 #endif
 
-/*~~~Constants~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~~~ constants ~~~~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 #define READY 1
 #define BLOCK 2
 #define RUNNING 3
@@ -64,32 +63,37 @@ address_t translate_address(address_t addr)
 #define MAIN_THREAD_TID 0
 #define SECOND 1000000
 #define RET_VAL_FOR_LONG 1
-/*~~~~~~ERROR MESSAGE~~~~~~~*/
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~ System error messages ~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 #define SYS_ERR "system error: %s\n"
 #define SIG_ACTION_ERR "sig_action failed"
 #define PROCMASK_ERR "sigprocmask failed"
 #define ITIMER_ERR "setitimer failed"
 #define BAD_ALLOC_ERR "allocation failed"
+#define SIG_EMPTY_SET_ERR "sigemptyset failed" // set errno to indicate the error
 
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~ Library error messages ~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 #define LIB_ERR "thread library error: %s\n"
 #define INVALID_TID "the thread id is invalid (it needs to be  between 0 to 99)"
-#define MAX_THREAD_NUM_REACHED "no more threads can be spawned"
-
+#define MAX_THREAD_NUM_REACHED "you reached the max number of threads"
 #define NON_EXIST_THREAD "the thread doesn't exist"
 #define INVALID_BLOCK_TO_MAIN "it's illegal to block the main thread"
 #define NON_POSITIVE_QUANTUM_USECS "quantum_usecs must be positive"
-
 #define INVALID_ENTRY "invalid entry point"
 
-#define SIG_EMPTY_SET_ERR "sigemptyset failed" // set errno to indicate the error
-
-/*This class represents thread object*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~~ Thread class ~~~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 class Thread{
 private:
     int tid = 0;
     char* stack{};
     int state;
-    int quantum_counter =1;
+    int quantum_counter = 1;
     thread_entry_point  entry_point{};
     int sleeping_period  = 0;
 
@@ -178,259 +182,42 @@ public:
     }
 };
 
-/*~~~Data structures~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~ Data structures ~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 std::list<Thread*> ready_list;
 std::map<int,Thread*> thread_map;
 std::list<Thread*> sleeping_threads;
-/*~~~Global variables~~~~*/
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~ Global variables ~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 int program_quantum_num;
 int global_quantum_counter = 1;
 Thread *running_thread;
 struct sigaction sa = {nullptr};
 struct itimerval timer;
 sigset_t set;
-/*~~~~~~ Signatures ~~~~~~~*/
-void install_timer_handler(void);
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~~~~ Signatures ~~~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+void install_timer_handler();
 void switch_threads();
-/*~~~~~~ Helper functions ~~~~~~*/
-//int uthread_print(void){
-//    printf("##------------------------------------\n");
-//    printf("---- Thread map ----\n");
+void remove_thread_in_ready_list_by_tid(int);
+int get_thread_id_for_spawn();
+int tid_validation(int tid);
+void block_timer(int how);
+void timer_configuration();
+void reset_virtual_timer_for_this_process();
+void update_sleeping_list();
+void timer_handler(int sig);
+void terminate_all_threads();
 
-//    for (auto &pair: thread_map) {
-//        pair.second->print_thread();
-//    }
-//    printf("---- Ready list ----\n");
-//    for (auto &e: ready_list) {
-//        e->print_thread();
-//    }
-//    printf("##------------------------------------\n");
-//    return SUCCESS;
-//}
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ uthread library ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
-int uthread_print_as_list(void){
-    printf("Thread map : ");
-    printf("[ ");
-    if(!thread_map.empty()){
-        for (auto &pair: thread_map) {
-            printf("%d,",pair.first);
-        }
-    }
-    printf(" ]\n");
-    printf("Ready list : ");
-    printf("[ ");
-
-    if (!ready_list.empty()){
-        for (auto &e: ready_list) {
-            printf("%d,",e->get_tid());
-        }
-    }
-    printf(" ]\n");
-
-    printf("Sleeping list : ");
-    printf("[ ");
-
-    if (!sleeping_threads.empty()){
-        for (auto &e: sleeping_threads) {
-            printf("%d,",e->get_tid());
-        }
-    }
-    printf(" ]\n");
-
-    if(running_thread != nullptr){
-        printf("Currently running thread: %d\n",running_thread->get_tid());
-    }
-    else{
-        printf("Currently running thread: NULL\n");
-
-    }
-    return SUCCESS;
-}
-
-/**
- * @return the current minimal available tid
- */
-int get_thread_id_for_spawn(){
-    int check = 0;
-    for (auto &pair: thread_map) {
-        if(check != pair.first){return check;}
-        check++;
-    }
-    return (int)thread_map.size();
-}
-
-/**
- *  remove thread in ready list by tid
- *  @param tid thread id
- */
-void remove_thread_in_ready_list_by_tid(int tid) {
-    for (auto it = ready_list.begin(); it != ready_list.end() ; it++) {
-        if((*it)->get_tid() == tid){
-            delete *it;
-            ready_list.erase(it);
-            return;
-        }
-    }
-}
-
-/**
- * @param flag indicator whether to block or unblock the signal mask set
- */
-void block_timer(int how){
-    if(sigprocmask(how,&set, nullptr)){
-        fprintf(stderr,SYS_ERR, PROCMASK_ERR);
-        exit(1);
-    }
-}
-
-//void default_timer_handler(void){
-//    // Install timer_handler as the signal handler for SIGVTALRM.
-//    memset(&sa, 0, sizeof(sa));
-//    sa.sa_handler = SIG_IGN;
-//    sa.sa_flags = SA_SIGINFO;
-//    if (sigaction(SIGVTALRM, &sa, NULL) < 0)
-//    {
-//        printf("sigaction error.");
-//    }
-//    block_timer(false);
-//}
-
-/**
- * initialize the alarm clock timer to expire after quentum time
- */
-void timer_configuration(){
-    timer.it_value.tv_sec = program_quantum_num / SECOND;        // first time interval, seconds part
-    timer.it_value.tv_usec = program_quantum_num % SECOND;        // first time interval, microseconds part
-    timer.it_interval.tv_sec = program_quantum_num / SECOND;    // following time intervals, seconds part
-    timer.it_interval.tv_usec = program_quantum_num % SECOND;    // following time intervals, microseconds part
-}
-
-/**
- * reset a virtual timer. It counts down whenever this process is executing.
- */
-void reset_virtual_timer_for_this_process(){
-    if (setitimer(ITIMER_VIRTUAL, &timer, NULL))
-    {
-        fprintf(stderr,SYS_ERR,ITIMER_ERR);
-        exit(1);
-    }
-}
-
-/**
- * every quantum this function is call, iterates over the sleeping list and decrease their sleeping period time.
- * and wakes threads up if needed.
- * @return 0 for success and -1 for failure
- */
-int update_sleeping_list(){
-//    if(sleeping_threads.empty()){return SUCCESS;}
-    for (auto it = sleeping_threads.begin(); it != sleeping_threads.end() ; ++it) {
-        auto cur = *it;
-        cur->dec_sleeping_period();
-        // if the current thread needs to wake up
-        if(cur->get_sleeping_period() == 0){
-            if(cur->get_state() == SLEEPING){
-                cur->set_state(READY);
-                ready_list.push_back(cur);
-            }
-            else{ // otherwise the thread is both blocked and sleeping, and now should be only blocked
-                cur->set_state(BLOCK);
-            }
-            it = sleeping_threads.erase(it);
-        }
-    }
-    return SUCCESS;
-}
-
-
-/**
- * signal handler for the SIGVTALR.
- * executed only when the quantum expire.
- * @param sig - the signal which woke this function
- */
-void timer_handler(int sig){
-    block_timer(SIG_BLOCK); // so we won't get signal during the execution of this function
-    global_quantum_counter++; // TODO maybe in switch_threads function
-//    update_sleeping_list();
-    /* set the running thread to be in the end of the ready list*/
-    running_thread->set_state(READY);
-    ready_list.push_back(running_thread);
-    switch_threads();
-}
-
-/**
- * This function can be called when quantum time is expired, thread is terminated or blocked.
- */
-void switch_threads() {
-
-    /* if the running thread isn't terminated */
-    if(running_thread != nullptr)
-    {
-        int ret_val = sigsetjmp(running_thread->t_env, RET_VAL_FOR_LONG);
-        if(ret_val == RET_VAL_FOR_LONG){
-            block_timer(SIG_UNBLOCK);
-            return;
-        }
-    }
-    update_sleeping_list();
-
-    // pop the first thread from the ready list and set it to be the running thread and increase his quantum by one
-    running_thread = ready_list.front();
-    running_thread->set_state(RUNNING);
-    running_thread->inc_quantum();
-    ready_list.pop_front();
-    block_timer(SIG_UNBLOCK);
-//    uthread_print_as_list();
-
-    // jump to the next thread
-    siglongjmp(running_thread->t_env,RET_VAL_FOR_LONG);
-
-}
-
-/**
- * Install timer_handler as the signal handler for SIGVTALRM.
- */
-void install_timer_handler(){
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = &timer_handler;
-    sa.sa_flags = SA_SIGINFO;
-    if (sigaction(SIGVTALRM, &sa, NULL) < 0)
-    {
-        fprintf(stderr,SYS_ERR,SIG_ACTION_ERR);
-        exit(1);
-    }
-
-}
-/**
- * checks if tid between 0 to 100,prints error if needed.
- * assumption: SIGVTALRM is blocked when calling
- * @param tid
- * @return 0 for success -1 othewrwise
- */
-int tid_validation(int tid){
-    if(tid >= MAX_THREAD_NUM || tid < 0 ){
-        fprintf(stderr,LIB_ERR,INVALID_TID);
-        block_timer(SIG_UNBLOCK);
-        return FAILURE;
-    }
-    return SUCCESS;
-}
-/**
- * free all the stacks allocated for each thread (except for main) and clear all data structures
- */
-void terminate_all_threads() {
-    for (auto p : thread_map) {
-        delete p.second;
-        p.second = nullptr;
-    }
-    thread_map.clear();
-    ready_list.clear();
-    sleeping_threads.clear();
-}
-
-
-/*~~~~~~~~~~~~~~~~~~~~~~*/
-
-/*~~~~~~ UThread library ~~~~~~*/
 /**
  * @brief initializes the thread library.
  *
@@ -447,9 +234,7 @@ int uthread_init(int quantum_usecs){
         fprintf(stderr,LIB_ERR,NON_POSITIVE_QUANTUM_USECS);
         return FAILURE;
     }
-
     program_quantum_num = quantum_usecs;
-
     // initialize the main thread to be the running thread and insert it to map
     try{
         running_thread = new Thread();
@@ -468,7 +253,6 @@ int uthread_init(int quantum_usecs){
     install_timer_handler();
     timer_configuration();
     reset_virtual_timer_for_this_process();
-//    uthread_print_as_list();
     return SUCCESS;
 }
 /**
@@ -494,19 +278,14 @@ int uthread_spawn(thread_entry_point entry_point){
         return FAILURE;
     }
 
-    Thread* thread = new Thread(get_thread_id_for_spawn(), entry_point);
-    if(thread == nullptr){
-        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
-        exit(1);
-    }
+    auto* thread = new Thread(get_thread_id_for_spawn(), entry_point); // TODO validation
 
     ready_list.push_back(thread);
     thread_map.insert({thread->get_tid(),thread});
-//    printf("Spawned thread: %d\n",thread->get_tid());
-//    uthread_print_as_list();
     block_timer(SIG_UNBLOCK);
     return thread->get_tid();
 }
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
 void remove_from_sleeping_threads(int tid){
     for(auto it = sleeping_threads.begin();it != sleeping_threads.end();it++){
@@ -516,6 +295,7 @@ void remove_from_sleeping_threads(int tid){
         }
     }
 }
+
 /**
  * @brief Terminates the thread with ID tid and deletes it from all relevant control structures.
  *
@@ -613,7 +393,7 @@ int uthread_block(int tid){
             break;
 
     }
-    // else if the the thread in block already there is no effect
+    // else if the thread in block already there is no effect
     block_timer(SIG_UNBLOCK);
     return SUCCESS;
 }
@@ -719,3 +499,235 @@ int uthread_get_quantums(int tid){
     block_timer(SIG_UNBLOCK);
     return thread_map[tid]->get_quantums();
 }
+
+
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Helper functions ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+
+/*
+ * @return the current minimal available tid
+ */
+int get_thread_id_for_spawn(){
+    int check = 0;
+    for (auto &pair: thread_map) {
+        if(check != pair.first){return check;}
+        check++;
+    }
+    return (int)thread_map.size();
+}
+
+/*
+ *  remove thread in ready list by tid
+ *  @param tid thread id
+ */
+void remove_thread_in_ready_list_by_tid(int tid) {
+    for (auto it = ready_list.begin(); it != ready_list.end() ; it++) {
+        if((*it)->get_tid() == tid){
+            delete *it;
+            ready_list.erase(it);
+            return;
+        }
+    }
+}
+
+/*
+ * initialize the alarm clock timer to expire after quantum time
+ */
+void timer_configuration(){
+    timer.it_value.tv_sec = program_quantum_num / SECOND;        // first time interval, seconds part
+    timer.it_value.tv_usec = program_quantum_num % SECOND;        // first time interval, microseconds part
+    timer.it_interval.tv_sec = program_quantum_num / SECOND;    // following time intervals, seconds part
+    timer.it_interval.tv_usec = program_quantum_num % SECOND;    // following time intervals, microseconds part
+}
+
+/*
+ * reset a virtual timer. It counts down whenever this process is executing.
+ */
+void reset_virtual_timer_for_this_process(){
+    if (setitimer(ITIMER_VIRTUAL, &timer, NULL))
+    {
+        fprintf(stderr,SYS_ERR,ITIMER_ERR);
+        exit(1);
+    }
+}
+
+/*
+ * every quantum this function is call, iterates over the sleeping list and decrease their sleeping period time.
+ * and wakes threads up if needed.
+ */
+void update_sleeping_list(){
+    for (auto it = sleeping_threads.begin(); it != sleeping_threads.end() ; ++it) {
+        auto cur = *it;
+        cur->dec_sleeping_period();
+        // if the current thread needs to wake up
+        if(cur->get_sleeping_period() == 0){
+            if(cur->get_state() == SLEEPING){
+                cur->set_state(READY);
+                ready_list.push_back(cur);
+            }
+            else{ // otherwise, the thread is both blocked and sleeping, and now should be only blocked
+                cur->set_state(BLOCK);
+            }
+            it = sleeping_threads.erase(it);
+        }
+    }
+}
+
+
+/*
+ * signal handler for the SIGVTALRM.
+ * executed only when the quantum expire.
+ * @param sig - the signal which woke this function
+ */
+void timer_handler(int sig){
+    block_timer(SIG_BLOCK); // so we won't get signal during the execution of this function
+    global_quantum_counter++; // TODO maybe in switch_threads function
+    /* set the running thread to be in the end of the ready list*/
+    running_thread->set_state(READY);
+    ready_list.push_back(running_thread);
+    switch_threads();
+}
+
+/*
+ * This function can be called when quantum time is expired, thread is terminated or blocked.
+ */
+void switch_threads() {
+
+    /* if the running thread isn't terminated */
+    if(running_thread != nullptr)
+    {
+        int ret_val = sigsetjmp(running_thread->t_env, RET_VAL_FOR_LONG);
+        if(ret_val == RET_VAL_FOR_LONG){
+            block_timer(SIG_UNBLOCK);
+            return;
+        }
+    }
+    update_sleeping_list();
+    // pop the first thread from the ready list and set it to be the running thread and increase his quantum by one
+    running_thread = ready_list.front();
+    running_thread->set_state(RUNNING);
+    running_thread->inc_quantum();
+    ready_list.pop_front();
+    block_timer(SIG_UNBLOCK);
+    // jump to the next thread
+    siglongjmp(running_thread->t_env,RET_VAL_FOR_LONG);
+
+}
+
+/*
+ * Install timer_handler as the signal handler for SIGVTALRM.
+ */
+void install_timer_handler(){
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = &timer_handler;
+    sa.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGVTALRM, &sa, NULL) < 0)
+    {
+        fprintf(stderr,SYS_ERR,SIG_ACTION_ERR);
+        exit(1);
+    }
+}
+
+/*
+ * @param flag indicator whether to block or unblock the signal mask set
+ */
+void block_timer(int how){
+    if(sigprocmask(how,&set, nullptr)){
+        fprintf(stderr,SYS_ERR, PROCMASK_ERR);
+        exit(1);
+    }
+}
+
+/*
+ * checks if tid between 0 and 100,prints error if needed.
+ * assumption: SIGVTALRM is blocked when calling
+ * return 0 for success -1 otherwise
+ */
+
+int tid_validation(int tid){
+    if(tid >= MAX_THREAD_NUM || tid < 0 ){
+        fprintf(stderr,LIB_ERR,INVALID_TID);
+        block_timer(SIG_UNBLOCK);
+        return FAILURE;
+    }
+    return SUCCESS;
+}
+/*
+ * free all the stacks allocated for each thread (except for main) and clear all data structures
+ */
+void terminate_all_threads() {
+    for (auto p : thread_map) {
+        delete p.second;
+        p.second = nullptr;
+    }
+    thread_map.clear();
+    ready_list.clear();
+    sleeping_threads.clear();
+}
+
+//void default_timer_handler(void){
+//    // Install timer_handler as the signal handler for SIGVTALRM.
+//    memset(&sa, 0, sizeof(sa));
+//    sa.sa_handler = SIG_IGN;
+//    sa.sa_flags = SA_SIGINFO;
+//    if (sigaction(SIGVTALRM, &sa, NULL) < 0)
+//    {
+//        printf("sigaction error.");
+//    }
+//    block_timer(false);
+//}
+
+//int uthread_print(void){
+//    printf("##------------------------------------\n");
+//    printf("---- Thread map ----\n");
+
+//    for (auto &pair: thread_map) {
+//        pair.second->print_thread();
+//    }
+//    printf("---- Ready list ----\n");
+//    for (auto &e: ready_list) {
+//        e->print_thread();
+//    }
+//    printf("##------------------------------------\n");
+//    return SUCCESS;
+//}
+
+//int uthread_print_as_list(){
+//    printf("Thread map : ");
+//    printf("[ ");
+//    if(!thread_map.empty()){
+//        for (auto &pair: thread_map) {
+//            printf("%d,",pair.first);
+//        }
+//    }
+//    printf(" ]\n");
+//    printf("Ready list : ");
+//    printf("[ ");
+//
+//    if (!ready_list.empty()){
+//        for (auto &e: ready_list) {
+//            printf("%d,",e->get_tid());
+//        }
+//    }
+//    printf(" ]\n");
+//
+//    printf("Sleeping list : ");
+//    printf("[ ");
+//
+//    if (!sleeping_threads.empty()){
+//        for (auto &e: sleeping_threads) {
+//            printf("%d,",e->get_tid());
+//        }
+//    }
+//    printf(" ]\n");
+//
+//    if(running_thread != nullptr){
+//        printf("Currently running thread: %d\n",running_thread->get_tid());
+//    }
+//    else{
+//        printf("Currently running thread: NULL\n");
+//
+//    }
+//    return SUCCESS;
+//}
