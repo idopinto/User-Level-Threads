@@ -1,0 +1,70 @@
+idopinto12, ilana315061945
+Ido Pinto (206483620), Ilana gelman (315061945)
+EX: 2
+FILES:
+uthreads.cpp
+
+ANSWERS:
+
+Q1:
+    One general use of user-level threads is multi-threaded applications.
+    Such an application needs to switch between threads very often and should be
+    costumed specifically according to the user's desires.
+    Hence, it might be reasonable choice to implement user-level
+    threads library because one of their advantages is that scheduling can be application-specific.
+    Furthermore, if we used kernel level threads in multi-threaded application,
+    the overhead will be very expensive, and the use of user-level threads is much faster
+    and efficient.
+
+Q2:
+ Advantages:
+    1. creating a new process for each tab and running each process separately,
+        keeps the entire browser stable in case one of them crashes and all it takes is to refresh this tab.
+        otherwise, the entire browser could crash and require to close and reopen.
+    2. Security - if someone attacks one tab in chrome, it can't reach other tabs, because each tab
+        is completely isolated from the others.
+ Disadvantages:
+    1. Creating a new process for each tab when a large amount of tabs are created leads to
+       very high overhead and memory usage since for each tab, all operations require a kernel trap with significant
+       work. In comparison to kernel-threads which has lower overhead and less memory usage.
+
+Q3:
+    a.  pid: 16435
+    c.  when typing 'kill pid' by default the signal the OS generates to shotwell's process is SIGKILL (signal 9)
+        which is a notification to the process to stop the execution immediately and terminate the process and it's
+        threads. The signal was triggered by a-synchronize input from the user when pressing the command 'kill pid' in
+        the shell with the keyboard.
+        The signal was handled by the shotwell's process.
+
+
+Q4:
+    Real time:
+        The time that has passed in the system, for instance on a real-time clock from 3pm to 3:30,
+        we have 30 minutes exactly.
+
+    Virtual time:
+        The running time of the process, if the process ran from 1pm to 1:05pm it still might sleep from 1:02-1:03
+        so the virtual time is 4 minutes and not 5.
+
+Q5:
+
+ sigsetjmp:
+    This function saves the current stack environment and  optionally,the signal mask.
+
+    parameters:
+    1. env is a pointer to the sigjmp_buf structure that contains the current environment.
+    2. savemask is a flag used to determine if the signal mask is to be saved.
+       if it is 0,the current signal mask is not saved,a none-zero value means that the current signal mask is saved.
+       Return value: sigsetjmp returns 0, or the value specified in the call to siglongjmp.
+
+ siglongjmp:
+    This function restores all the stack environment and the signal mask
+    (if a none-zero value was given) saved by the most recent invocation of sigsetjmp function.
+    Then it returns control to a point in the program corresponding to the sigsetjmp() call.
+    siglongjmp provide a way to perform a nonlocal goto.
+    parameters:
+    1. env is an address for sigjmp_buf structure.
+    2. val is the return value from siglongjmp.
+
+
+
