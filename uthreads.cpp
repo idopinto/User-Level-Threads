@@ -1,9 +1,7 @@
-
 #include <cstdio>
 #include "uthreads.h"
 #include <csetjmp>
 #include <map>
-#include <set>
 #include <list>
 #include <signal.h>
 #include <sys/time.h>
@@ -84,9 +82,11 @@ address_t translate_address(address_t addr)
 #define INVALID_BLOCK_TO_MAIN "it's illegal to block the main thread"
 #define NON_POSITIVE_QUANTUM_USECS "quantum_usecs must be positive"
 #define INVALID_ENTRY "invalid entry point"
-
+#define SLEEP_ON_MAIN_THREAD "it's illegal to put the main thread on sleep"
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 /*~~~~~~~~~ Thread class ~~~~~~~~~~*/
+
+
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 class Thread{
 private:
@@ -271,6 +271,7 @@ int uthread_spawn(thread_entry_point entry_point){
 
     if(!entry_point){
         fprintf(stderr,LIB_ERR,INVALID_ENTRY);
+        return FAILURE;
     }
 
     if ((int)(thread_map).size() == MAX_THREAD_NUM){
@@ -278,7 +279,13 @@ int uthread_spawn(thread_entry_point entry_point){
         return FAILURE;
     }
 
-    auto* thread = new Thread(get_thread_id_for_spawn(), entry_point); // TODO validation
+
+
+    auto* thread = new (std::nothrow) Thread(get_thread_id_for_spawn(), entry_point);
+    if(thread == nullptr){
+        fprintf(stderr,SYS_ERR,BAD_ALLOC_ERR);
+        exit(1);
+    }
 
     ready_list.push_back(thread);
     thread_map.insert({thread->get_tid(),thread});
@@ -342,7 +349,6 @@ int uthread_terminate(int tid){
             global_quantum_counter++;
             delete running_thread;
             running_thread = nullptr;
-            if(ready_list.empty()){ uthread_terminate(0);}
             switch_threads();
             break;
     }
@@ -445,12 +451,18 @@ int uthread_sleep(int num_quantums){
         fprintf(stderr,LIB_ERR,NON_POSITIVE_QUANTUM_USECS);
         return FAILURE;
     }
-    running_thread->set_sleeping_period(num_quantums);
-    running_thread->set_state(SLEEPING);
-    sleeping_threads.push_back(running_thread);
-    global_quantum_counter++;
-    reset_virtual_timer_for_this_process();
-    switch_threads();
+    if((running_thread != nullptr)&&(running_thread->get_tid() == MAIN_THREAD_TID)){
+        fprintf(stderr,LIB_ERR,SLEEP_ON_MAIN_THREAD);
+        return FAILURE;
+    }
+    if(running_thread != nullptr){
+        running_thread->set_sleeping_period(num_quantums);
+        running_thread->set_state(SLEEPING);
+        sleeping_threads.push_back(running_thread);
+        global_quantum_counter++;
+        reset_virtual_timer_for_this_process();
+        switch_threads();
+    }
     return SUCCESS;
 }
 
@@ -582,9 +594,8 @@ void update_sleeping_list(){
  */
 void timer_handler(int sig){
     block_timer(SIG_BLOCK); // so we won't get signal during the execution of this function
-    global_quantum_counter++; // TODO maybe in switch_threads function
-    /* set the running thread to be in the end of the ready list*/
-    running_thread->set_state(READY);
+    global_quantum_counter++;
+    running_thread->set_state(READY); // set the running thread to be in the end of the ready list
     ready_list.push_back(running_thread);
     switch_threads();
 }
@@ -603,6 +614,7 @@ void switch_threads() {
             return;
         }
     }
+
     update_sleeping_list();
     // pop the first thread from the ready list and set it to be the running thread and increase his quantum by one
     running_thread = ready_list.front();
@@ -665,69 +677,3 @@ void terminate_all_threads() {
     ready_list.clear();
     sleeping_threads.clear();
 }
-
-//void default_timer_handler(void){
-//    // Install timer_handler as the signal handler for SIGVTALRM.
-//    memset(&sa, 0, sizeof(sa));
-//    sa.sa_handler = SIG_IGN;
-//    sa.sa_flags = SA_SIGINFO;
-//    if (sigaction(SIGVTALRM, &sa, NULL) < 0)
-//    {
-//        printf("sigaction error.");
-//    }
-//    block_timer(false);
-//}
-
-//int uthread_print(void){
-//    printf("##------------------------------------\n");
-//    printf("---- Thread map ----\n");
-
-//    for (auto &pair: thread_map) {
-//        pair.second->print_thread();
-//    }
-//    printf("---- Ready list ----\n");
-//    for (auto &e: ready_list) {
-//        e->print_thread();
-//    }
-//    printf("##------------------------------------\n");
-//    return SUCCESS;
-//}
-
-//int uthread_print_as_list(){
-//    printf("Thread map : ");
-//    printf("[ ");
-//    if(!thread_map.empty()){
-//        for (auto &pair: thread_map) {
-//            printf("%d,",pair.first);
-//        }
-//    }
-//    printf(" ]\n");
-//    printf("Ready list : ");
-//    printf("[ ");
-//
-//    if (!ready_list.empty()){
-//        for (auto &e: ready_list) {
-//            printf("%d,",e->get_tid());
-//        }
-//    }
-//    printf(" ]\n");
-//
-//    printf("Sleeping list : ");
-//    printf("[ ");
-//
-//    if (!sleeping_threads.empty()){
-//        for (auto &e: sleeping_threads) {
-//            printf("%d,",e->get_tid());
-//        }
-//    }
-//    printf(" ]\n");
-//
-//    if(running_thread != nullptr){
-//        printf("Currently running thread: %d\n",running_thread->get_tid());
-//    }
-//    else{
-//        printf("Currently running thread: NULL\n");
-//
-//    }
-//    return SUCCESS;
-//}
